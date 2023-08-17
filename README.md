@@ -35,7 +35,7 @@ exposed-modules:
 
 ### IV. Compiling & Testing
 
-The unhappy path testing was done assuming that an Either returning a Left is an error and was such was included on the tests (test *cantCreateWithNoHouse*).
+The unhappy path testing was done assuming that an Either returning a Left is an error and as such was included on the tests (test *cantCreateWithNoHouse*).
 
 To compile and test, run the pre-written script in the `Test.daml` under /daml OR run:
 
