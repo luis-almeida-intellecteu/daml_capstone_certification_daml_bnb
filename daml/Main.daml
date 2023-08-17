@@ -1,0 +1,118 @@
+module Main where
+
+import DA.Date (subDate)
+import DA.Set
+
+type HouseId = ContractId House
+type RentingProposalId = ContractId RentingProposal
+
+data HouseInfo = HouseInfo with
+    id                  : Text -- House ID for landlord
+    typology            : Text -- Type of house, e.g, Apartment, House, etc
+    address             : Text -- Street, number, etc
+    dateOnMarket        : Date -- Date it was placed on the housing market
+        deriving (Show, Eq, Ord)
+
+data RentAgreement = RentAgreement with
+    price               : Decimal   -- price agreed between Landlord and Renter 
+    renteeSet           : Set Party -- Set of rentees for the House contract
+    leaseStartDate      : Date      -- Date of lease start
+    leaseEndDate        : Date      -- Date of lease end
+        deriving (Show, Eq, Ord)
+    
+class Duration i o where
+    getDuration  : i -> o
+
+instance Duration RentAgreement Int where
+    -- Get the duration of the Lease
+    getDuration rentAgreement = subDate rentAgreement.leaseEndDate rentAgreement.leaseStartDate
+
+template RentingProposal
+    with
+        landlord                    : Party
+        renter                      : Party
+        houseId                     : Text
+        proposedRentAgreement       : RentAgreement
+    where
+        signatory renter
+        observer  landlord
+
+        ensure renter `member` proposedRentAgreement.renteeSet &&
+            proposedRentAgreement.leaseEndDate > proposedRentAgreement.leaseStartDate &&
+            proposedRentAgreement.price > 0.0
+
+        choice ApproveProposal : Either Text (HouseId)
+            controller landlord
+            do
+                lookupByKey @House (landlord, houseId) >>=
+                        optional    (return $ Left "No House Exists") -- If the House contract does not exist
+                                    (\houseCid -> do
+                                        house <- fetch houseCid
+                                        if (house.houseInfo.dateOnMarket > proposedRentAgreement.leaseStartDate)then 
+                                            return $ Left "The House may not be rented before it is on the market"
+                                        else if house.rented then return $ Left "The house is already occupied"
+                                            else do
+                                                archive houseCid -- Archive the old contract to create the new one
+                                                houseAgreement <- create House with -- Create the new House contract with the new agreement
+                                                    landlord
+                                                    renter  
+                                                    houseInfo   = house.houseInfo
+                                                    rented      = True
+                                                    rentAgreement       = RentAgreement with 
+                                                        price           = proposedRentAgreement.price
+                                                        renteeSet       = proposedRentAgreement.renteeSet
+                                                        leaseStartDate  = proposedRentAgreement.leaseStartDate
+                                                        leaseEndDate    = proposedRentAgreement.leaseEndDate
+                                                    
+                                                return $ Right $ houseAgreement)
+        
+        choice RejectProposal : ()
+            controller landlord
+            do pure ()
+
+        choice AlterRentees : RentingProposalId
+            with 
+                newRenteeSet : Set Party
+            controller renter
+            do
+                assertMsg "Renter party must be included in rentee list" $ renter `member` newRenteeSet
+                if newRenteeSet == proposedRentAgreement.renteeSet then return self
+                else do create this with proposedRentAgreement.renteeSet = newRenteeSet
+
+template House
+    with
+        landlord        : Party
+        renter          : Party -- defaults to landlord when no renting is taking place
+        houseInfo       : HouseInfo
+        rentAgreement   : RentAgreement
+        rented          : Bool
+    where
+        signatory landlord
+        observer rentAgreement.renteeSet
+        key (landlord, houseInfo.id) : (Party, Text)
+        maintainer key._1
+
+        ensure  rentAgreement.leaseStartDate >= houseInfo.dateOnMarket && 
+                rentAgreement.leaseEndDate > rentAgreement.leaseStartDate &&
+                rentAgreement.price > 0.0
+
+        nonconsuming choice LeaseDuration : Int
+            controller landlord
+            do return $ getDuration rentAgreement
+
+        nonconsuming choice ShowRentees : [Text]
+            controller landlord
+            do return $ map show $ toList rentAgreement.renteeSet
+
+        choice CancelAgreement : HouseId
+            controller landlord, renter
+            do
+                create this with renter = landlord, rented = False, rentAgreement = rentAgreement with renteeSet = fromList [landlord]
+
+
+
+
+
+        
+
+

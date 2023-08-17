@@ -1,0 +1,157 @@
+module Test where
+
+import Daml.Script
+import Main
+import Setup
+import DA.Assert
+import DA.Set (fromList)
+
+{-
+    Min 1 Full Scenario & Min 3 Happy Paths
+        + testCreateRentingProposal: renter can create RentingProposal contract and the landlord can either "RejectProposal" or "ApproveProposal"
+            1. landlord creates House contract
+            2. renter creates a RentingProposal contract     
+        + testApproveRenting: landlord can exercise "ApproveProposal" to update the House contract with the new Renting Agreement
+            1. landlord exercises ApproveProposal - the House contract is updated
+        + testRentingProposal: renter and landlord can exercise RejectProposal, AlterRentees
+            1. renter exercises AlterRentees and adds a new Rentee
+            2. landlord exercises RejectProposal and denies the proposal
+        + (Full Scenario)testCancelRenting: landlord can exercise "ApproveProposal" to update the House contract with the new Renting Agreement and then landlord and renter cancel the agreement
+            1. landlord exercises ApproveProposal - the House contract is updated
+            2. landlord and renter exercise CancelAgreement
+        + testShowRentees: landlord can exercise ShowRentees
+            1. landlord exercises ShowRentees to display a list with all rentees of a House
+        + testLeaseDuration: landlord can exercise LeaseDuration
+            1. landlord exercises LeaseDuration to obtain the duration of the lease in days
+
+    Min 3 Unhappy Paths
+        - cantCreateWithNoHouse: renting proposal cannot be approved if House contract does not exist
+        - cantRemoveRenterFromList: When exercising "AlterRentees", renter cannot remove themselves from the rentee set
+        - cantRentWithPriceBelowZero: House may not be rented for free or negative amounts
+-}
+
+-- + testCreateRentingProposal: renter can create RentingProposal contract and the landlord can either "RejectProposal" or "ApproveProposal"
+testCreateRentingProposal = script do
+    (testParties@TestParties{..}, testRentAgreements@TestRentAgreements{..}, testHouseInfo@TestHouseInfo{..}) <- setupRentAgreementsAndHouses
+    -- 1.landlord creates House contract
+    houseContract3 <- submit landlord do
+        createCmd House with
+            landlord
+            renter  = landlord
+            houseInfo = house1 with id = "HSE_3"
+            rentAgreement = defaultAgreement
+            rented = False
+    -- 2. renter creates a RentingProposal contract   
+    rentingProposal3 <- submit renter do
+        createCmd RentingProposal with
+            landlord
+            renter
+            houseId = "HSE_3"
+            proposedRentAgreement = rentAgreement1
+
+    
+    return (testParties, testRentAgreements, testHouseInfo, houseContract3, rentingProposal3)
+
+-- + testApproveRenting: landlord can exercise "ApproveProposal" to update the House contract with the new Renting Agreement
+testApproveRenting = script do
+    (testParties@TestParties{..}, testRentAgreements@TestRentAgreements{..}, testHouseInfo@TestHouseInfo{..}, houseContract3, rentingProposal3) <- testCreateRentingProposal
+
+    eitherApprovedHouse3Cid <- submit landlord do
+        exerciseCmd rentingProposal3 ApproveProposal
+
+    let Right approvedHouse3Cid = eitherApprovedHouse3Cid
+
+    optApprovedHouse3 <- queryContractId landlord approvedHouse3Cid
+
+    let Some approvedHouse3 = optApprovedHouse3
+
+    approvedHouse3.renter === renter
+
+    return (testParties, testRentAgreements, testHouseInfo, approvedHouse3Cid)
+
+-- + testRentingProposal: renter and landlord can exercise RejectProposal, AlterRentees
+testRentingProposal = script do
+    (testParties@TestParties{..}, testRentAgreements@TestRentAgreements{..}, testHouseInfo@TestHouseInfo{..}, houseContract3, rentingProposal3) <- testCreateRentingProposal
+    -- 1. renter exercises AlterRentees and adds a new Rentee
+    alteredRentingProposal <- submit renter do
+        exerciseCmd rentingProposal3 AlterRentees with newRenteeSet = fromList [renter, sndRenter]
+
+    -- 2. landlord exercises RejectProposal and denies the proposal
+    submit landlord do
+        exerciseCmd alteredRentingProposal RejectProposal
+
+    return ()
+
+-- + testCancelRenting: landlord can exercise "ApproveProposal" to update the House contract with the new Renting Agreement and then landlord and renter cancel the agreement
+testCancelRenting = script do
+    -- 1. landlord exercises ApproveProposal - the House contract is updated
+    (testParties@TestParties{..}, testRentAgreements@TestRentAgreements{..}, testHouseInfo@TestHouseInfo{..}, approvedHouse3Cid) <- testApproveRenting
+
+    -- 2. landlord and renter exercise CancelAgreement
+    submitMulti [landlord, renter] [] do
+        exerciseCmd approvedHouse3Cid CancelAgreement
+
+    return ()
+
+
+-- + testShowRentees: landlord can exercise ShowRentees
+testShowRentees = script do
+    (testParties@TestParties{..}, testRentAgreements@TestRentAgreements{..}, testHouseInfo@TestHouseInfo{..}, approvedHouse3Cid) <- testApproveRenting
+
+    -- 1. landlord exercises ShowRentees to display a list with all rentees of a House
+    submit landlord do
+        exerciseCmd approvedHouse3Cid ShowRentees
+
+    return ()
+
+-- + testLeaseDuration: landlord can exercise LeaseDuration
+testLeaseDuration = script do
+    (testParties@TestParties{..}, testRentAgreements@TestRentAgreements{..}, testHouseInfo@TestHouseInfo{..}, approvedHouse3Cid) <- testApproveRenting
+
+    -- 1. landlord exercises LeaseDuration to obtain the duration of the lease in days
+    leaseDuration <- submit landlord do
+        exerciseCmd approvedHouse3Cid LeaseDuration
+    
+    debug leaseDuration
+
+    return ()
+
+-- - cantCreateWithNoHouse: renting proposal cannot be approved if House contract does not exist
+cantCreateWithNoHouse = script do
+
+    (testParties@TestParties{..}, testRentAgreements@TestRentAgreements{..}, testHouseInfo@TestHouseInfo{..}) <- setupRentAgreementsAndHouses
+
+    rentingProposal3 <- submit renter do
+        createCmd RentingProposal with
+            landlord
+            renter
+            houseId = "HSE_3"
+            proposedRentAgreement = rentAgreement1
+
+    eitherApprovedHouse3Cid <- submit landlord do
+        exerciseCmd rentingProposal3 ApproveProposal
+
+
+    let Left errorMsg = eitherApprovedHouse3Cid
+
+    errorMsg === "No House Exists"
+
+    return ()
+
+-- - cantRemoveRenterFromList: When exercising "AlterRentees", renter cannot remove themselves from the rentee set
+cantRemoveRenterFromList = script do
+    (testParties@TestParties{..}, testRentAgreements@TestRentAgreements{..}, testHouseInfo@TestHouseInfo{..}, houseContract3, rentingProposal3) <- testCreateRentingProposal
+    submitMustFail renter do
+        exerciseCmd rentingProposal3 AlterRentees with newRenteeSet = fromList [sndRenter]
+
+-- - cantRentWithPriceBelowZero: House may not be rented for free or negative amounts
+cantRentWithPriceBelowZero = script do
+    (testParties@TestParties{..}, testRentAgreements@TestRentAgreements{..}, testHouseInfo@TestHouseInfo{..}) <- setupRentAgreementsAndHouses
+  
+    submitMustFail renter do
+        createCmd RentingProposal with
+            landlord
+            renter
+            houseId = "HSE_1"
+            proposedRentAgreement = rentAgreement1 with price = 0.0
+

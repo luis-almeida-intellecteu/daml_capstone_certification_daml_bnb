@@ -1,0 +1,105 @@
+module Setup where
+
+import Main
+import DA.Date
+import DA.Set
+import Daml.Script
+
+data TestParties = TestParties with
+    landlord    : Party
+    renter      : Party
+    sndRenter   : Party
+
+setupTestParties = script do
+    -- 1. Allocate parties with the given display name
+    landlord    <- allocatePartyWithHint "Landlord"     (PartyIdHint "Landlord")
+    renter      <- allocatePartyWithHint "Renter"       (PartyIdHint "Renter")
+    sndRenter   <- allocatePartyWithHint "SndRenter"    (PartyIdHint "SndRenter")
+
+    return TestParties with
+        landlord
+        renter
+        sndRenter
+
+
+setupUsers = script do
+    (testParties@TestParties{..}, testRentAgreements@TestRentAgreements{..}, testHouseInfo@TestHouseInfo{..}) <- setupRentAgreementsAndHouses
+
+    -- 2. Construct user-ids from text
+    landlordId  <- validateUserId "Landlord"   
+    renter1Id   <- validateUserId "Renter1"
+    renter2Id   <- validateUserId "Renter2"
+
+    -- 3. Create users with the given rights 
+    createUser (User landlordId (Some landlord))    [CanActAs landlord]  
+    createUser (User renter1Id  (Some renter))      [CanActAs renter]
+    createUser (User renter2Id  (Some sndRenter))   [CanActAs sndRenter]
+
+    submit landlord do
+        createCmd House with
+            landlord
+            renter          = landlord
+            houseInfo       = house1
+            rentAgreement   = defaultAgreement
+            rented          = False
+
+    submit renter do
+        createCmd RentingProposal with
+            landlord
+            renter
+            houseId = "HSE_1"
+            proposedRentAgreement = rentAgreement1
+
+
+data TestRentAgreements = TestRentAgreements with
+    rentAgreement1 : RentAgreement
+    rentAgreement2 : RentAgreement
+    defaultAgreement : RentAgreement
+
+data TestHouseInfo = TestHouseInfo with
+    house1 : HouseInfo
+    house2 : HouseInfo
+       
+
+setupRentAgreementsAndHouses = script do
+    testParties@TestParties{..} <- setupTestParties
+
+    let
+        -- Rent Agreement for a single renter
+        rentAgreement1 = RentAgreement with 
+            price           = 100.0
+            renteeSet       = fromList [renter]
+            leaseStartDate  = date 2023 Jun 12
+            leaseEndDate    = date 2023 Aug 31
+
+        -- Rent Agreement with 2 renters in the set 
+        rentAgreement2 = RentAgreement with
+            price           = 100.0
+            renteeSet       = fromList [renter, sndRenter]
+            leaseStartDate  = date 2023 Feb 17
+            leaseEndDate    = date 2023 Mar 19
+
+        -- Rent Agreement where the house was not rented yet
+        defaultAgreement = RentAgreement with
+            price           = 100.0
+            renteeSet       = fromList [landlord]
+            leaseStartDate  = date 2023 Jan 15
+            leaseEndDate    = date 2023 Feb 16
+
+        -- House1
+        house1 = HouseInfo with
+            id              = "HSE_1"
+            typology        = "Apartment"
+            address         = "Rodrick Avenue 14"
+            dateOnMarket    = date 2023 Jan 1
+
+        -- House2
+        house2 = HouseInfo with
+            id              = "HSE_2"
+            typology        = "House"
+            address         = "Rodrick Avenue 23"
+            dateOnMarket    = date 2023 Jan 1
+
+    return (testParties, TestRentAgreements with {rentAgreement1,defaultAgreement,rentAgreement2}, TestHouseInfo with {house1, house2})
+
+

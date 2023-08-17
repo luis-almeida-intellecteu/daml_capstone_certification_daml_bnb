@@ -1,0 +1,11 @@
+sdk-version: 2.6.1
+name: DamlBnB
+source: daml
+init-script: Setup:setupUsers
+version: 0.0.1
+dependencies:
+  - daml-prim
+  - daml-stdlib
+  - daml-script
+exposed-modules:
+  - Main
